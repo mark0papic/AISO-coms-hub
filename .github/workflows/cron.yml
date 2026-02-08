@@ -1,0 +1,35 @@
+name: AISO Comms Hub - Generate Drafts
+
+on:
+  schedule:
+    # Every 15 minutes during working hours (9am-10pm UTC, Mon-Fri)
+    - cron: "*/15 9-22 * * 1-5"
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run generation
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          NOTION_BRAND_VOICE_PAGE_ID: ${{ secrets.NOTION_BRAND_VOICE_PAGE_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: claude-sonnet-4-20250514
+          MAX_PAGES_PER_RUN: "10"
+        run: npx tsx scripts/run-once.ts

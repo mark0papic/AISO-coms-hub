@@ -103,11 +103,11 @@ export async function fetchReadyPages(): Promise<NotionPageInput[]> {
 
   do {
     const response = await withRetry(() =>
-      notion.databases.query({
-        database_id: config.NOTION_DATABASE_ID,
+      notion.dataSources.query({
+        data_source_id: config.NOTION_DATABASE_ID,
         filter: {
           property: "Status",
-          status: { equals: "Ready for Comms" },
+          select: { equals: "Ready for Comms" },
         },
         page_size: 100,
         start_cursor: cursor,
@@ -148,7 +148,7 @@ function extractPageInput(page: any): NotionPageInput | null {
     return {
       pageId: page.id,
       title,
-      status: getStatus(props["Status"]),
+      status: getSelect(props["Status"]),
       type: getSelect(props["Type"]),
       pillar: getSelect(props["Pillar"]),
       primaryAudience: getMultiSelect(props["Primary Audience"]),
@@ -283,14 +283,21 @@ export async function writeGeneratedDrafts(
     };
   }
 
-  // Set metadata — all in the same update call for atomicity
-  properties["Status"] = { status: { name: "Generated" } };
-  properties["Last Generated At"] = {
-    date: { start: new Date().toISOString() },
-  };
-  properties["Generation Version"] = {
-    rich_text: [{ type: "text" as const, text: { content: GENERATION_VERSION } }],
-  };
+  // Set status
+  properties["Status"] = { select: { name: "Generated" } };
+
+  // Set optional meta properties only if they exist in the database
+  const dbProps = await getDbProperties();
+  if (dbProps.has("Last Generated At")) {
+    properties["Last Generated At"] = {
+      date: { start: new Date().toISOString() },
+    };
+  }
+  if (dbProps.has("Generation Version")) {
+    properties["Generation Version"] = {
+      rich_text: [{ type: "text" as const, text: { content: GENERATION_VERSION } }],
+    };
+  }
 
   await withRetry(() =>
     notion.pages.update({
@@ -298,6 +305,22 @@ export async function writeGeneratedDrafts(
       properties,
     }),
   );
+}
+
+// ============================================================
+// Database property discovery (cached)
+// ============================================================
+
+let dbPropsCache: Set<string> | null = null;
+
+async function getDbProperties(): Promise<Set<string>> {
+  if (dbPropsCache) return dbPropsCache;
+
+  const db = await withRetry(() =>
+    notion.dataSources.retrieve({ data_source_id: config.NOTION_DATABASE_ID }),
+  );
+  dbPropsCache = new Set(Object.keys((db as any).properties ?? {}));
+  return dbPropsCache;
 }
 
 // ============================================================

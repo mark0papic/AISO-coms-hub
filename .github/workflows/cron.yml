@@ -5,6 +5,8 @@ on:
     # Every 15 minutes during working hours (9am-10pm UTC, Mon-Fri)
     - cron: "*/15 9-22 * * 1-5"
   workflow_dispatch: # Allow manual trigger from GitHub UI
+  repository_dispatch: # Allow trigger from n8n webhook
+    types: [generate-comms]
 
 jobs:
   generate:

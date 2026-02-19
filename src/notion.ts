@@ -116,7 +116,7 @@ export async function fetchReadyPages(): Promise<NotionPageInput[]> {
 
     for (const page of response.results) {
       if (!("properties" in page)) continue;
-      const parsed = extractPageInput(page);
+      const parsed = await extractPageInput(page);
       if (parsed) pages.push(parsed);
     }
 
@@ -127,14 +127,80 @@ export async function fetchReadyPages(): Promise<NotionPageInput[]> {
 }
 
 // ============================================================
+// Fetch content from a linked Notion page (blocks → text)
+// ============================================================
+
+async function fetchPageContent(pageId: string): Promise<string> {
+  const blocks: string[] = [];
+  let cursor: string | undefined = undefined;
+
+  try {
+    do {
+      const response = await withRetry(() =>
+        notion.blocks.children.list({
+          block_id: pageId,
+          page_size: 100,
+          start_cursor: cursor,
+        }),
+      );
+
+      for (const block of response.results) {
+        if ("type" in block) {
+          const text = extractBlockText(block);
+          if (text) blocks.push(text);
+        }
+      }
+      cursor = response.has_more ? (response.next_cursor ?? undefined) : undefined;
+    } while (cursor);
+  } catch (error: unknown) {
+    const status = typeof error === "object" && error !== null && "status" in error
+      ? (error as { status: number }).status
+      : undefined;
+    if (status === 404) {
+      console.warn(`  Linked page ${pageId} not found (404). Skipping.`);
+      return "";
+    }
+    throw error;
+  }
+
+  return blocks.join("\n");
+}
+
+// ============================================================
+// Extract page mention IDs from a rich_text property
+// ============================================================
+
+function extractPageMentionIds(prop: any): string[] {
+  const ids: string[] = [];
+  for (const item of prop?.rich_text ?? []) {
+    if (item.type === "mention" && item.mention?.type === "page") {
+      ids.push(item.mention.page.id);
+    }
+  }
+  return ids;
+}
+
+// ============================================================
 // Extract structured input from a Notion page
 // ============================================================
 
-function extractPageInput(page: any): NotionPageInput | null {
+async function extractPageInput(page: any): Promise<NotionPageInput | null> {
   const props = page.properties;
   try {
     const title = getTitle(props["Title"] ?? props["Name"]);
-    const coreBrief = getRichText(props["Core Brief"]);
+    let coreBrief = getRichText(props["Core Brief"]);
+
+    // Resolve linked Notion pages in Core Brief
+    const linkedPageIds = extractPageMentionIds(props["Core Brief"]);
+    if (linkedPageIds.length > 0) {
+      console.log(`  Found ${linkedPageIds.length} linked page(s) in Core Brief. Fetching content...`);
+      for (const linkedId of linkedPageIds) {
+        const content = await fetchPageContent(linkedId);
+        if (content) {
+          coreBrief += "\n\n" + content;
+        }
+      }
+    }
 
     if (!title) {
       console.warn(`Skipping page ${page.id}: missing Title`);
